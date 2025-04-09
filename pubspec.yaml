@@ -12,8 +12,16 @@ dependencies:
     sdk: flutter
   flutter_bloc: ^9.1.0
   flutter_map: ^8.1.1
+  flutter_map_math: ^0.2.1
   flutter_modular: ^6.3.4
+  image_picker: ^1.1.2
+  intl: ^0.20.2
   latlong2: ^0.9.1
+  location: ^8.0.0
+  path: ^1.9.1
+  path_provider: ^2.1.5
+  supabase: ^2.6.3
+  supabase_flutter: ^2.8.4
 
 dev_dependencies:
   flutter_test:

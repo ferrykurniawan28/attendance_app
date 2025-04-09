@@ -7,6 +7,7 @@ class AppRoute extends Module {
   @override
   void routes(RouteManager r) {
     r.child('/', child: (_) => const Splash());
+    r.child('/home', child: (_) => const HomePage());
     r.module('/auth', module: AuthRoute());
   }
 }
