@@ -60,10 +60,16 @@ class UserService {
   static Future<UserModel> updateProfile({
     String? name,
     String? photoProfileUrl,
+    String? email,
   }) async {
     try {
       final userId = _supabase.auth.currentUser?.id;
       if (userId == null) throw DatabaseException('Not authenticated');
+
+      // Update the user's email in the auth table
+      if (email != null) {
+        await _supabase.auth.updateUser(UserAttributes(email: email));
+      }
 
       final response =
           await _supabase
@@ -94,12 +100,25 @@ class UserService {
               .eq('user_id', userId)
               .single();
 
-      return UserModel.fromJson(response);
+      //return email from auth table
+      final authUser = _supabase.auth.currentUser;
+
+      if (authUser != null) {
+        return UserModel(
+          userId: userId,
+          name: response['name'] as String?,
+          email: authUser.email,
+          photoProfileUrl: response['photo_profile_url'] as String?,
+          createdAt: DateTime.parse(response['created_at'] as String),
+          updatedAt: DateTime.parse(response['updated_at'] as String),
+        );
+      }
     } on PostgrestException catch (e) {
       throw DatabaseException('Failed to fetch user: ${e.message}');
     } catch (e) {
       throw DatabaseException('Unexpected error: ${e.toString()}');
     }
+    return null;
   }
 }
 

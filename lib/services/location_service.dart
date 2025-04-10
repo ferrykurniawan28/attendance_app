@@ -35,7 +35,7 @@ class LocationService {
 
       await Future.delayed(const Duration(seconds: 1));
       LocationData locationData = await _location.getLocation().timeout(
-        const Duration(seconds: 30),
+        const Duration(seconds: 15),
       );
 
       if (locationData.latitude == null || locationData.longitude == null) {
@@ -57,9 +57,10 @@ class LocationService {
       );
     } catch (e) {
       debugPrint("Error getting location: $e");
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Error getting location')));
+      // ignore: use_build_context_synchronously
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Error getting location try refresh')),
+      );
       return null;
     }
   }

@@ -27,6 +27,10 @@ class Splash extends StatelessWidget {
       Modular.to.navigate('/auth');
     });
 
-    return Scaffold(body: Center(child: const Text('Attendance App')));
+    return Scaffold(
+      body: Center(
+        child: const Text('Attendance App', style: TextStyle(fontSize: 24)),
+      ),
+    );
   }
 }

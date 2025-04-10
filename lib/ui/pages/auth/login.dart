@@ -16,10 +16,48 @@ class _LoginPageState extends State<LoginPage> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
+  void _toggleMode(bool signInMode) {
+    setState(() {
+      isSignInMode = signInMode;
+    });
+  }
+
+  Future<void> _handleSubmit() async {
+    if (_formKey.currentState?.validate() ?? false) {
+      setState(() {
+        _isLoading = true;
+      });
+
+      try {
+        if (isSignInMode) {
+          await AuthService.signInWithEmail(
+            email: _emailController.text,
+            password: _passwordController.text,
+          );
+          Modular.to.navigate('/home');
+        } else {
+          final user = await AuthService.signUpWithEmail(
+            email: _emailController.text,
+            password: _passwordController.text,
+          );
+          await UserService.createUserProfile(
+            userId: user.user!.id,
+            name: _nameController.text,
+          );
+          Modular.to.navigate('/home');
+        }
+      } finally {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Attendance App')),
+      appBar: AppBar(title: const Text('Attendance App')),
       body: Center(
         child: Card(
           margin: const EdgeInsets.all(16.0),
@@ -29,173 +67,141 @@ class _LoginPageState extends State<LoginPage> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    Expanded(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          border: Border(
-                            bottom: BorderSide(
-                              color: isSignInMode ? Colors.blue : Colors.grey,
-                              width: 2.0,
-                            ),
-                          ),
-                        ),
-                        child: TextButton(
-                          onPressed: () {
-                            setState(() {
-                              isSignInMode = true;
-                            });
-                          },
-                          child: Text('Sign In'),
-                        ),
-                      ),
-                    ),
-                    SizedBox(
-                      height: 50,
-                      child: const VerticalDivider(
-                        thickness: 1,
-                        width: 1,
-                        color: Colors.grey,
-                      ),
-                    ),
-                    Expanded(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          border: Border(
-                            bottom: BorderSide(
-                              color: isSignInMode ? Colors.grey : Colors.blue,
-                              width: 2.0,
-                            ),
-                          ),
-                        ),
-                        child: TextButton(
-                          onPressed: () {
-                            setState(() {
-                              isSignInMode = false;
-                            });
-                          },
-                          child: Text('Register'),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                _buildModeToggle(),
                 const SizedBox(height: 16),
-                Form(
-                  key: _formKey,
-                  child: Column(
-                    children: [
-                      if (!isSignInMode)
-                        TextFormField(
-                          controller: _nameController,
-                          decoration: InputDecoration(
-                            labelText: 'Name',
-                            border: OutlineInputBorder(),
-                          ),
-                          validator: (value) {
-                            if (value == null || value.isEmpty) {
-                              return 'Please enter your name';
-                            }
-                            return null;
-                          },
-                        ),
-                      if (!isSignInMode) const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _emailController,
-                        decoration: InputDecoration(
-                          labelText: 'Email',
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please enter your email';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _passwordController,
-                        obscureText: true,
-                        decoration: InputDecoration(
-                          labelText: 'Password',
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please enter your password';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 24),
-                      SizedBox(
-                        width: double.infinity,
-                        child:
-                            (_isLoading)
-                                ? CircularProgressIndicator()
-                                : ElevatedButton(
-                                  style: ElevatedButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 16.0,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8.0),
-                                    ),
-                                    backgroundColor: Colors.blue,
-                                  ),
-                                  onPressed: () async {
-                                    if (_formKey.currentState?.validate() ??
-                                        false) {
-                                      setState(() {
-                                        _isLoading = true;
-                                      });
-                                      if (isSignInMode) {
-                                        await AuthService.signInWithEmail(
-                                          email: _emailController.text,
-                                          password: _passwordController.text,
-                                        ).then((value) {
-                                          Modular.to.navigate('/home');
-                                        });
-                                        // Modular.to.navigate('/home');
-                                      } else {
-                                        await AuthService.signUpWithEmail(
-                                          email: _emailController.text,
-                                          password: _passwordController.text,
-                                        ).then((value) async {
-                                          await UserService.createUserProfile(
-                                            userId: value.user!.id,
-                                            name: _nameController.text,
-                                          ).then((_) {
-                                            Modular.to.navigate('/home');
-                                          });
-                                        });
-                                        setState(() {
-                                          _isLoading = false;
-                                        });
-                                      }
-                                    }
-                                  },
-                                  child: Text(
-                                    isSignInMode ? 'Sign In' : 'Register',
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ),
-                      ),
-                    ],
-                  ),
-                ),
+                _buildForm(),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildModeToggle() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        _buildModeButton('Sign In', isSignInMode, () => _toggleMode(true)),
+        const SizedBox(
+          height: 50,
+          child: VerticalDivider(thickness: 1, width: 1, color: Colors.grey),
+        ),
+        _buildModeButton('Register', !isSignInMode, () => _toggleMode(false)),
+      ],
+    );
+  }
+
+  Widget _buildModeButton(String text, bool isActive, VoidCallback onPressed) {
+    return Expanded(
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: isActive ? Colors.blue : Colors.grey,
+              width: 2.0,
+            ),
+          ),
+        ),
+        child: TextButton(onPressed: onPressed, child: Text(text)),
+      ),
+    );
+  }
+
+  Widget _buildForm() {
+    return Form(
+      key: _formKey,
+      child: Column(
+        children: [
+          if (!isSignInMode) ...[
+            _buildTextField(
+              controller: _nameController,
+              labelText: 'Name',
+              validator:
+                  (value) =>
+                      value == null || value.isEmpty
+                          ? 'Please enter your name'
+                          : null,
+            ),
+            const SizedBox(height: 16),
+          ],
+          _buildTextField(
+            controller: _emailController,
+            labelText: 'Email',
+            validator:
+                (value) =>
+                    value == null || value.isEmpty
+                        ? 'Please enter your email'
+                        : null,
+          ),
+          const SizedBox(height: 16),
+          _buildTextField(
+            controller: _passwordController,
+            labelText: 'Password',
+            obscureText: true,
+            validator:
+                (value) =>
+                    value == null || value.isEmpty
+                        ? 'Please enter your password'
+                        : null,
+          ),
+          const SizedBox(height: 24),
+          _buildSubmitButton(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTextField({
+    required TextEditingController controller,
+    required String labelText,
+    bool obscureText = false,
+    String? Function(String?)? validator,
+  }) {
+    return TextFormField(
+      controller: controller,
+      obscureText: obscureText,
+      decoration: InputDecoration(
+        labelText: labelText,
+        border: const OutlineInputBorder(),
+      ),
+      validator: validator,
+    );
+  }
+
+  Widget _buildSubmitButton() {
+    return SizedBox(
+      width: double.infinity,
+      child:
+          _isLoading
+              ? const CircularProgressIndicator()
+              : DateTime.now().hour < 8 || DateTime.now().hour > 17
+              ? const Text(
+                'Access is not allowed before 08:00',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.red,
+                ),
+              )
+              : ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16.0),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8.0),
+                  ),
+                  backgroundColor: Colors.blue,
+                ),
+                onPressed: _handleSubmit,
+                child: Text(
+                  isSignInMode ? 'Sign In' : 'Register',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
     );
   }
 }

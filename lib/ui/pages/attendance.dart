@@ -11,29 +11,64 @@ class _AttendancePageState extends State<AttendancePage> {
   File? _selfie;
   LatLng? _userLocation;
   bool _isSubmitting = false;
+  bool _mocked = false;
+  double? _distance;
+  final _attendanceService = AttendanceService();
+  final LatLng _destination = const LatLng(-6.200000, 106.816666); // Jakarta
+  Attendance? _latestAttendance;
+  bool _isLoadingAttendance = true;
 
   @override
   void initState() {
     super.initState();
-    _getCurrentLocation();
+    _initializePage();
+  }
+
+  Future<void> _initializePage() async {
+    await _getCurrentLocation();
+    await _loadLatestAttendance();
   }
 
   Future<void> _getCurrentLocation() async {
-    final location = Location();
+    try {
+      final location = Location();
+      if (!await _ensureLocationPermissions(location)) return;
 
-    if (!await location.serviceEnabled()) {
-      await location.requestService();
+      final locationData = await location.getLocation().timeout(
+        const Duration(seconds: 30),
+      );
+
+      if (locationData.latitude == null || locationData.longitude == null) {
+        _showSnackBar('Unable to fetch location.');
+        return;
+      }
+
+      final current = LatLng(locationData.latitude!, locationData.longitude!);
+      final distance = Distance().as(LengthUnit.Meter, current, _destination);
+
+      setState(() {
+        _userLocation = current;
+        _distance = distance;
+        _mocked = locationData.isMock ?? false;
+      });
+    } catch (e) {
+      _showSnackBar('Error getting location: $e');
+    }
+  }
+
+  Future<bool> _ensureLocationPermissions(Location location) async {
+    if (!await location.serviceEnabled() && !await location.requestService()) {
+      _showSnackBar('Location services are disabled.');
+      return false;
     }
 
-    var permissionGranted = await location.hasPermission();
-    if (permissionGranted == PermissionStatus.denied) {
-      await location.requestPermission();
+    if (await location.hasPermission() == PermissionStatus.denied &&
+        await location.requestPermission() != PermissionStatus.granted) {
+      _showSnackBar('Location permissions are denied.');
+      return false;
     }
 
-    final locationData = await location.getLocation();
-    setState(() {
-      _userLocation = LatLng(locationData.latitude!, locationData.longitude!);
-    });
+    return true;
   }
 
   Future<void> _pickSelfie() async {
@@ -42,27 +77,38 @@ class _AttendancePageState extends State<AttendancePage> {
       source: ImageSource.camera,
       imageQuality: 75,
     );
-    if (picked != null) {
-      setState(() {
-        _selfie = File(picked.path);
-      });
+    if (picked != null && mounted) {
+      setState(() => _selfie = File(picked.path));
+    }
+  }
+
+  Future<void> _loadLatestAttendance() async {
+    try {
+      setState(() => _isLoadingAttendance = true);
+      final attendance = await _attendanceService.getLatestAttendance();
+      if (mounted) {
+        setState(() {
+          _latestAttendance = attendance;
+          _isLoadingAttendance = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        _showSnackBar('Error loading attendance: $e');
+        setState(() => _isLoadingAttendance = false);
+      }
     }
   }
 
   Future<void> _submitAttendance() async {
-    if (_selfie == null || _userLocation == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please take a selfie and allow GPS.')),
-      );
-      return;
-    }
+    if (!_validateSubmission()) return;
 
     setState(() => _isSubmitting = true);
 
     try {
       final user = Supabase.instance.client.auth.currentUser;
-      final name = user?.userMetadata?['name'] ?? 'User';
       final now = DateTime.now();
+      final isLate = now.hour > 8 || (now.hour == 8 && now.minute > 30);
       final fileName = '${user!.id}_${now.millisecondsSinceEpoch}.jpg';
 
       final selfiePath = 'selfies/$fileName';
@@ -74,81 +120,215 @@ class _AttendancePageState extends State<AttendancePage> {
           .from('attendance')
           .getPublicUrl(selfiePath);
 
+      final userData = await UserService.getCurrentUser();
+
       await Supabase.instance.client.from('attendance').insert({
         'user_id': user.id,
-        'name': name,
+        'name': userData!.name,
         'datetime': now.toIso8601String(),
         'photo_url': selfieUrl,
         'latitude': _userLocation!.latitude,
         'longitude': _userLocation!.longitude,
+        'is_late': isLate,
+        'distance': _distance,
       });
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Attendance submitted!')));
-
-      setState(() {
-        _selfie = null;
-        _isSubmitting = false;
-      });
+      _showSnackBar('Attendance submitted!');
+      await _loadLatestAttendance(); // Refresh the latest attendance
     } catch (e) {
-      setState(() => _isSubmitting = false);
+      _showSnackBar('Error submitting attendance: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+          _selfie = null;
+        });
+      }
+    }
+  }
+
+  bool _validateSubmission() {
+    if (_selfie == null || _userLocation == null) {
+      _showSnackBar('Please take a selfie and allow GPS.');
+      return false;
+    }
+
+    if (_mocked || _distance! > 100) {
+      _showSnackBar('Invalid location or fake GPS detected.');
+      return false;
+    }
+
+    if (_distance! > 50) {
+      _showSnackBar('You are too far from the target location.');
+      return false;
+    }
+
+    if (_distance! <= 0) {
+      _showSnackBar('You are already at the target location.');
+      return false;
+    }
+
+    return true;
+  }
+
+  void _showSnackBar(String message) {
+    if (mounted) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      ).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('Attendance'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () async {
+              await _getCurrentLocation();
+              await _loadLatestAttendance();
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.history),
+            onPressed: () => Modular.to.pushNamed('/attendance-history'),
+          ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: GestureDetector(
-                  onTap: _pickSelfie,
-                  child: Container(
-                    // height: 200,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(8.0),
-                      image:
-                          _selfie != null
-                              ? DecorationImage(
-                                image: FileImage(_selfie!),
-                                fit: BoxFit.cover,
-                              )
-                              : null,
-                    ),
-                    child:
-                        _selfie == null
-                            ? Center(
-                              child: Icon(
-                                Icons.camera_alt,
-                                size: 50,
-                                color: Colors.grey[700],
-                              ),
+        child: _buildMainContent(),
+      ),
+    );
+  }
+
+  Widget _buildMainContent() {
+    if (_isLoadingAttendance) {
+      return Column(
+        children: [
+          Shimmer.fromColors(
+            baseColor: Colors.grey[300]!,
+            highlightColor: Colors.grey[100]!,
+            child: Container(
+              width: double.infinity,
+              height: MediaQuery.of(context).size.height * 0.8,
+              color: Colors.white,
+            ),
+          ),
+        ],
+      );
+    }
+
+    return _latestAttendance != null
+        ? _alreadyAttendanceWidget(_latestAttendance!)
+        : _attendanceWidget();
+  }
+
+  Widget _alreadyAttendanceWidget(Attendance attendance) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Image.network(attendance.photoUrl),
+        const SizedBox(height: 20),
+        Text(
+          'Attendance already submitted today at: ${DateFormat('HH:mm').format(attendance.datetime)}',
+          style: const TextStyle(fontSize: 16),
+        ),
+        Text(
+          attendance.isLate ? 'You are late!' : 'You are on time!',
+          style: TextStyle(
+            color: attendance.isLate ? Colors.red : Colors.green,
+          ),
+        ),
+        const SizedBox(height: 20),
+        Text(
+          'Distance: ${attendance.distance.toStringAsFixed(2)} m',
+          style: const TextStyle(fontSize: 16),
+        ),
+        Text(
+          'Mocked: ${attendance.isMocked ? "Yes" : "No"}',
+          style: TextStyle(
+            color: attendance.isMocked ? Colors.red : Colors.green,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _attendanceWidget() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: GestureDetector(
+            onTap: _pickSelfie,
+            child: Stack(
+              children: [
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(8.0),
+                    image:
+                        _selfie != null
+                            ? DecorationImage(
+                              image: FileImage(_selfie!),
+                              fit: BoxFit.cover,
                             )
                             : null,
                   ),
+                  child:
+                      _selfie == null
+                          ? Center(
+                            child: Icon(
+                              Icons.camera_alt,
+                              size: 50,
+                              color: Colors.grey[700],
+                            ),
+                          )
+                          : null,
                 ),
-              ),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: _isSubmitting ? null : _submitAttendance,
-                child:
-                    _isSubmitting
-                        ? const CircularProgressIndicator()
-                        : const Text('Submit'),
-              ),
-            ],
+                if (_selfie != null)
+                  Align(
+                    alignment: Alignment.topRight,
+                    child: IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => setState(() => _selfie = null),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
-      ),
+        const SizedBox(height: 20),
+        if (_distance != null) ...[
+          Text(
+            "Distance to target: ${_distance!.toStringAsFixed(2)} m",
+            style: TextStyle(
+              color:
+                  _distance! >= 100
+                      ? Colors.red
+                      : _distance! < 50
+                      ? Colors.green
+                      : Colors.yellow,
+            ),
+          ),
+          Text(
+            "Mock location: ${_mocked ? "Yes" : "No"}",
+            style: TextStyle(color: _mocked ? Colors.red : Colors.green),
+          ),
+          const SizedBox(height: 10),
+        ],
+        ElevatedButton(
+          onPressed: _isSubmitting ? null : _submitAttendance,
+          child:
+              _isSubmitting
+                  ? const CircularProgressIndicator()
+                  : const Text('Submit'),
+        ),
+      ],
     );
   }
 }
